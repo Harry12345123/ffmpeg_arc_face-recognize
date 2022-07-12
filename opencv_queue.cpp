@@ -1,4 +1,5 @@
 #include "opencv_queue.h"
+#include <sys/time.h>
 
 OPENCV_QUEUE::OPENCV_QUEUE()
 {
@@ -30,6 +31,30 @@ Mat OPENCV_QUEUE::getMatQueue()
     Mat item = matPictureQueue.front();
     matPictureQueue.pop();
     pthread_mutex_unlock(&matMutex);
+    return item;
+}
+
+Mat OPENCV_QUEUE::getMatQueue_TimeOut()
+{
+    pthread_mutex_lock(&matMutex);
+    if (matPictureQueue.size() == 0)
+    {
+        struct timeval timeval_now;
+        struct timespec timespec_out;
+        gettimeofday(&timeval_now, NULL);
+        timespec_out.tv_sec = timeval_now.tv_sec + 1;
+        timespec_out.tv_nsec = timeval_now.tv_usec * 1000;
+        int ret = pthread_cond_timedwait(&matCond, &matMutex, &timespec_out);
+        if (ret != 0)
+        {
+            pthread_mutex_unlock(&matMutex);
+            //return NULL;
+        }
+    }
+
+    Mat item = matPictureQueue.front();
+    matPictureQueue.pop();
+    pthread_mutex_lock(&matMutex);
     return item;
 }
 

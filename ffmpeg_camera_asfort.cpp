@@ -40,17 +40,14 @@ extern "C"
 using namespace dnn;
 
 static pthread_mutex_t workmutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t av_fifo_cond = PTHREAD_COND_INITIALIZER;
-static pthread_mutex_t opencv_dnn_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 OPENCV_QUEUE *opencv_queue = NULL;
-OPENCV_QUEUE *handle_opencv_queue = NULL;
-OPENCV_QUEUE *recognize_handle_opencv_queue = NULL;
-
 AVFifoBuffer *m_videoFifo = NULL;
 
 float confThreshold = 0.5; //置信度阈值
 float nmsThreshold = 0.4;  //非最大抑制阈值
+
+float LiveScore = 0.0;
 
 void showDshowDeviceOption(char *devName)
 {
@@ -114,7 +111,6 @@ void *read_camera_thread(void *args)
 
     for (;;)
     {
-        static int i = 0;
         // 摄像头获取图像数据
         av_read_frame(fmt_ctx, camera_packet);
         memcpy(yuy2buf[0], camera_packet->data, camera_packet->size);
@@ -131,8 +127,6 @@ void *read_camera_thread(void *args)
             av_fifo_generic_write(m_videoFifo, yuv420pbuf[2], y_size / 4, NULL);
             pthread_mutex_unlock(&workmutex);
         }
-
-        usleep(200 * 10);
     }
 
     av_packet_free(&camera_packet);
@@ -175,6 +169,8 @@ void *process_asfort_recognize_thread(void *args)
     MFloat score = 0.0;
     string predict;
 
+    ASF_LivenessInfo livenessInfo = {0, 0};
+
     while (1)
     {
         if (av_fifo_size(m_videoFifo) >= frame_size)
@@ -200,197 +196,56 @@ void *process_asfort_recognize_thread(void *args)
             ASF_MultiFaceInfo getMultiFaceInfo = {0};
 
             MRESULT detect_res = ASFDetectFacesEx(m_hEngine, &getoffscreen, &detectedFaces);
-
-            for (int i = 0; i < detectedFaces.faceNum; i++)
+            if (detect_res == MOK)
             {
-                tempFaceInfo.faceOrient = detectedFaces.faceOrient[i];
-                tempFaceInfo.faceRect = detectedFaces.faceRect[i];
-
-                rectangle(mainRgbImage, Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), Point(detectedFaces.faceRect[i].right, detectedFaces.faceRect[i].bottom), Scalar(255, 0, 255), 3);
-
-                res = ASFFaceFeatureExtractEx(m_hEngine, &getoffscreen, &tempFaceInfo, &detectFaceFeature);
-                if (res == MOK)
+                for (int i = 0; i < detectedFaces.faceNum; i++)
                 {
-                    for (database_iter = database_face_map.begin(); database_iter != database_face_map.end(); database_iter++)
+                    tempFaceInfo.faceOrient = detectedFaces.faceOrient[i];
+                    tempFaceInfo.faceRect = detectedFaces.faceRect[i];
+
+                    rectangle(mainRgbImage, Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), Point(detectedFaces.faceRect[i].right, detectedFaces.faceRect[i].bottom), Scalar(255, 0, 255), 3);
+
+                    res = ASFFaceFeatureExtractEx(m_hEngine, &getoffscreen, &tempFaceInfo, &detectFaceFeature);
+                    if (res == MOK)
                     {
-                        res = ASFFaceFeatureCompare(m_hEngine, &database_iter->second, &detectFaceFeature, &confidenceValue);
-                        if (confidenceValue > maxScore)
+                        for (database_iter = database_face_map.begin(); database_iter != database_face_map.end(); database_iter++)
                         {
-                            maxScore = confidenceValue;
-                            predict = database_iter->first;
-                            score = maxScore;
+                            res = ASFFaceFeatureCompare(m_hEngine, &database_iter->second, &detectFaceFeature, &confidenceValue);
+                            if(confidenceValue >= 0.8)
+                            {
+                                predict = database_iter->first;
+                            }
+                            else
+                            {
+                                predict = "UnKnown";
+                            }
+
+                             cv::putText(mainRgbImage, predict, cv::Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 0, 0), 1);
+                            
+
+                            /*if (confidenceValue > maxScore)
+                            {
+                                maxScore = confidenceValue;
+                                predict = database_iter->first;
+                                score = maxScore;
+                            }*/
+
+                            /*if (score >= 0.8)
+                                break;*/
                         }
-
-                        if (score >= 0.8)
-                            break;
                     }
-
-                    if (score < 0.8)
-                        predict = "UnFound";
-
-                    cv::putText(mainRgbImage, predict, cv::Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 0, 0), 1);
                 }
             }
-
             opencv_queue->putMatQueue(mainRgbImage);
             tmp_img.release();
         }
     }
-
-    ASFUninitEngine(m_hEngine);
-}
-
-void *process_asfort_living_thread(void *args)
-{
-    MHandle m_hEngine;
-    MRESULT deres;
-    MRESULT res = MOK;
-    MInt32 mask = ASF_FACE_DETECT | ASF_FACERECOGNITION | ASF_AGE | ASF_GENDER | ASF_LIVENESS | ASF_IR_LIVENESS;
-    deres = ASFInitEngine(ASF_DETECT_MODE_IMAGE, ASF_OP_ALL_OUT, NSCALE, FACENUM, mask, &m_hEngine);
-    if (deres != MOK)
-        printf("ASFInitEngine fail: %d\n", deres);
-    else
-        printf("ASFInitEngine sucess: %d\n", deres);
-
-    int y_size = WIDTH * HEIGHT;
-    int frame_size = av_image_get_buffer_size(AV_PIX_FMT_YUV420P, WIDTH, HEIGHT, 1);
-    uint8_t *out_buffer_yuv420 = (uint8_t *)av_malloc(frame_size);
-
-    ASF_FaceFeature detectFaceFeature = {0};
-    ASF_MultiFaceInfo detectedFaces = {0};
-    ASF_SingleFaceInfo tempFaceInfo = {0};
-    MFloat confidenceValue;
-
-    while (1)
-    {
-        if (av_fifo_size(m_videoFifo) >= frame_size)
-        {
-            static int i = 0;
-            int video_fifo_size = av_fifo_size(m_videoFifo);
-            pthread_mutex_lock(&workmutex);
-            av_fifo_generic_read(m_videoFifo, out_buffer_yuv420, frame_size, NULL);
-            pthread_mutex_unlock(&workmutex);
-
-            int width = WIDTH, height = HEIGHT;
-            cv::Mat tmp_img = cv::Mat::zeros(height * 3 / 2, width, CV_8UC1);
-            Mat mainRgbImage;
-
-            memcpy(tmp_img.data, out_buffer_yuv420, frame_size);
-            cv::cvtColor(tmp_img, mainRgbImage, COLOR_YUV2BGR_I420);
-            cv::Mat image_mini;
-            resize(mainRgbImage, image_mini, cv::Size(mainRgbImage.cols - mainRgbImage.cols % 4, mainRgbImage.rows));
-
-            ASVLOFFSCREEN getoffscreen = {0};
-            ColorSpaceConversion(image_mini.cols, image_mini.rows, ASVL_PAF_RGB24_B8G8R8, image_mini.data, getoffscreen);
-            ASF_MultiFaceInfo getMultiFaceInfo = {0};
-
-            MRESULT detect_res = ASFDetectFacesEx(m_hEngine, &getoffscreen, &detectedFaces);
-            MInt32 processMask = ASF_AGE | ASF_GENDER | ASF_LIVENESS;
-            res = ASFProcessEx(m_hEngine, &getoffscreen, &detectedFaces, processMask);
-            if (res != MOK)
-            {
-            }
-            else
-            {
-            }
-
-            ASF_LivenessInfo rgbLivenessInfo = {0};
-            res = ASFGetLivenessScore(m_hEngine, &rgbLivenessInfo);
-            if (res != MOK)
-            {
-            }
-            else
-            {
-                if (rgbLivenessInfo.isLive[0] > 0)
-                {
-                }
-                else
-                {
-                }
-
-                // printf("ASFGetLivenessScore sucess: %d\n", rgbLivenessInfo.isLive[0]);
-            }
-
-#if 0
-            for (int i = 0; i < detectedFaces.faceNum; i++)
-            {
-                tempFaceInfo.faceOrient = detectedFaces.faceOrient[i];
-                tempFaceInfo.faceRect = detectedFaces.faceRect[i];
-                //rectangle(mainRgbImage, Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), Point(detectedFaces.faceRect[i].right, detectedFaces.faceRect[i].bottom), Scalar(255, 0, 255), 3);
-
-                res = ASFFaceFeatureExtractEx(m_hEngine, &getoffscreen, &tempFaceInfo, &detectFaceFeature);
-                if (res == MOK)
-                {
-                   // printf("Extract Face Success\n");
-                    ASF_LivenessThreshold threshold = {0};
-                    threshold.thresholdmodel_BGR = 0.5;
-                    threshold.thresholdmodel_IR = 0.7;
-                    res = ASFSetLivenessParam(m_hEngine, &threshold);
-                    if (res != MOK)
-                    {
-
-                    }
-                    else
-                    {
-
-                    }
-                      
-                    MInt32 processMask = ASF_AGE | ASF_GENDER | ASF_LIVENESS;
-                    res = ASFProcessEx(m_hEngine, &getoffscreen, &detectedFaces, processMask);
-                    if (res != MOK)
-                    {
-
-                    }
-                    else
-                    {
-
-                    }
-                   
-
-                    // IR图像活体检测
-                    /*MInt32 processIRMask = ASF_IR_LIVENESS;
-                    res = ASFProcessEx_IR(m_hEngine, &getoffscreen, &detectedFaces, processIRMask);
-                    if (res != MOK)
-                        printf("ASFProcessEx_IR fail: %d\n", res);
-                    else
-                        printf("ASFProcessEx_IR sucess: %d\n", res);*/
-
-                    ASF_LivenessInfo rgbLivenessInfo = {0};
-                    res = ASFGetLivenessScore(m_hEngine, &rgbLivenessInfo);
-                    if (res != MOK)
-                    {
-
-                    }
-                    else
-                    {
-                        printf("ASFGetLivenessScore sucess: %d\n", rgbLivenessInfo.isLive[0]);
-                    }
-                        
-                        //printf("ASFGetLivenessScore sucess: %d\n", rgbLivenessInfo.isLive[0]);
-
-                    //string is_Live = "123456";
-
-                    /*if (rgbLivenessInfo.isLive[0] > 0)
-                    {
-                        is_Live = "This is Live People";
-                    }
-                    else
-                    {
-                        is_Live = "This is unLive People";
-                    }*/
-                    //cv::putText(mainRgbImage, is_Live, cv::Point(detectedFaces.faceRect[i].left - 30, detectedFaces.faceRect[i].top - 50), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 0, 0), 1);
-                }
-            }
-#endif
-
-            opencv_queue->putMatQueue(mainRgbImage);
-            tmp_img.release();
-        }
-    }
-
-    ASFUninitEngine(m_hEngine);
+    av_fifo_free(m_videoFifo);
     av_free(out_buffer_yuv420);
+    ASFUninitEngine(m_hEngine);
 }
+
+
 
 void *show_opencv_thread(void *args)
 {
@@ -422,36 +277,30 @@ int main(int argc, char *argv[])
 
     int ret;
     m_videoFifo = av_fifo_alloc(30 * av_image_get_buffer_size(AV_PIX_FMT_YUV420P, 640, 480, 1));
-
+    
     opencv_queue = new OPENCV_QUEUE();
-    handle_opencv_queue = new OPENCV_QUEUE();
-    recognize_handle_opencv_queue = new OPENCV_QUEUE();
-
     init_asfort_device(APPID, SDKKEY);
     init_face_data();
 
-#if 1
     pthread_t pid;
     ret = pthread_create(&pid, NULL, read_camera_thread, NULL);
     if (ret != 0)
     {
+        printf("Create Read_Camera_Thread Failed\n");
     }
 
     ret = pthread_create(&pid, NULL, process_asfort_recognize_thread, NULL);
     if (ret != 0)
     {
+        printf("Create process_asfort_recognize_thread Failed\n");
     }
-
-    /*ret = pthread_create(&pid, NULL, process_asfort_living_thread, NULL);
-    if (ret != 0)
-    {
-    }*/
 
     ret = pthread_create(&pid, NULL, show_opencv_thread, NULL);
     if (ret != 0)
     {
+        printf("Create show_opencv_thread Failed\n");
     }
-#endif
+
 
     while (1)
     {

@@ -40,6 +40,9 @@ public:
     int putMatQueue(Mat mat);
     //出队函数
     Mat getMatQueue();
+
+    Mat getMatQueue_TimeOut();
+
     //队列大小
     int getMatQueueSize();
 
