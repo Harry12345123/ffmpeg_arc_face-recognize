@@ -220,7 +220,7 @@ void *process_asfort_recognize_thread(void *args)
                             //printf("Confidence_Value = %lf\n", confidenceValue);
                             if (confidenceValue >= 0.8)
                             {
-                                predict = database_iter->first;
+                                //predict = database_iter->first;
                                 is_recognize = true;
                                 break;
                             }
@@ -250,7 +250,8 @@ void *process_asfort_recognize_thread(void *args)
 
                         if(is_recognize == false)
                         {
-                            predict= "UnKnown";
+                            //predict= "UnKnown";
+                            predict = "";
                         }
 
                         cv::putText(mainRgbImage, predict, cv::Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 0, 0), 1);
