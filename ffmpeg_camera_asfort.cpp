@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <opencv2/dnn.hpp>
+#include <sstream>
 
 #include "arcsoft_face_sdk.h"
 #include "amcomdef.h"
@@ -167,12 +168,16 @@ void *process_asfort_recognize_thread(void *args)
     MFloat confidenceValue;
     MFloat maxScore = 0.0;
     MFloat score = 0.0;
-    string predict;
+    string predict ;
+
+    bool is_recognize = false;
 
     ASF_LivenessInfo livenessInfo = {0, 0};
 
     while (1)
     {
+        is_recognize = false;
+
         if (av_fifo_size(m_videoFifo) >= frame_size)
         {
             static int i = 0;
@@ -211,18 +216,22 @@ void *process_asfort_recognize_thread(void *args)
                         for (database_iter = database_face_map.begin(); database_iter != database_face_map.end(); database_iter++)
                         {
                             res = ASFFaceFeatureCompare(m_hEngine, &database_iter->second, &detectFaceFeature, &confidenceValue);
-                            if(confidenceValue >= 0.8)
+
+                            //printf("Confidence_Value = %lf\n", confidenceValue);
+                            if (confidenceValue >= 0.8)
                             {
                                 predict = database_iter->first;
+                                is_recognize = true;
+                                break;
                             }
                             else
                             {
-                                predict = "UnKnown";
+                                is_recognize = false;
+                                continue;
                             }
 
-                             cv::putText(mainRgbImage, predict, cv::Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 0, 0), 1);
+                            // printf("Name = %s\n", predict.c_str());
                             
-
                             /*if (confidenceValue > maxScore)
                             {
                                 maxScore = confidenceValue;
@@ -232,8 +241,21 @@ void *process_asfort_recognize_thread(void *args)
 
                             /*if (score >= 0.8)
                                 break;*/
+                        } 
+
+                        if(is_recognize == true)
+                        {
+                           predict = database_iter->first;
                         }
+
+                        if(is_recognize == false)
+                        {
+                            predict= "UnKnown";
+                        }
+
+                        cv::putText(mainRgbImage, predict, cv::Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 0, 0), 1);
                     }
+                    
                 }
             }
             opencv_queue->putMatQueue(mainRgbImage);
@@ -244,8 +266,6 @@ void *process_asfort_recognize_thread(void *args)
     av_free(out_buffer_yuv420);
     ASFUninitEngine(m_hEngine);
 }
-
-
 
 void *show_opencv_thread(void *args)
 {
@@ -277,7 +297,7 @@ int main(int argc, char *argv[])
 
     int ret;
     m_videoFifo = av_fifo_alloc(30 * av_image_get_buffer_size(AV_PIX_FMT_YUV420P, 640, 480, 1));
-    
+
     opencv_queue = new OPENCV_QUEUE();
     init_asfort_device(APPID, SDKKEY);
     init_face_data();
@@ -300,7 +320,6 @@ int main(int argc, char *argv[])
     {
         printf("Create show_opencv_thread Failed\n");
     }
-
 
     while (1)
     {
