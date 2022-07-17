@@ -168,7 +168,7 @@ void *process_asfort_recognize_thread(void *args)
     MFloat confidenceValue;
     MFloat maxScore = 0.0;
     MFloat score = 0.0;
-    string predict ;
+    string predict;
 
     bool is_recognize = false;
 
@@ -203,60 +203,62 @@ void *process_asfort_recognize_thread(void *args)
             MRESULT detect_res = ASFDetectFacesEx(m_hEngine, &getoffscreen, &detectedFaces);
             if (detect_res == MOK)
             {
-                for (int i = 0; i < detectedFaces.faceNum; i++)
+                if (detectedFaces.faceNum > 0)
                 {
-                    tempFaceInfo.faceOrient = detectedFaces.faceOrient[i];
-                    tempFaceInfo.faceRect = detectedFaces.faceRect[i];
-
-                    rectangle(mainRgbImage, Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), Point(detectedFaces.faceRect[i].right, detectedFaces.faceRect[i].bottom), Scalar(255, 0, 255), 3);
-
-                    res = ASFFaceFeatureExtractEx(m_hEngine, &getoffscreen, &tempFaceInfo, &detectFaceFeature);
-                    if (res == MOK)
+                    for (int i = 0; i < detectedFaces.faceNum; i++)
                     {
-                        for (database_iter = database_face_map.begin(); database_iter != database_face_map.end(); database_iter++)
+                        tempFaceInfo.faceOrient = detectedFaces.faceOrient[i];
+                        tempFaceInfo.faceRect = detectedFaces.faceRect[i];
+
+                        rectangle(mainRgbImage, Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), Point(detectedFaces.faceRect[i].right, detectedFaces.faceRect[i].bottom), Scalar(255, 0, 255), 3);
+
+                        res = ASFFaceFeatureExtractEx(m_hEngine, &getoffscreen, &tempFaceInfo, &detectFaceFeature);
+                        if (res == MOK)
                         {
-                            res = ASFFaceFeatureCompare(m_hEngine, &database_iter->second, &detectFaceFeature, &confidenceValue);
+                            for (database_iter = database_face_map.begin(); database_iter != database_face_map.end(); database_iter++)
+                            {
+                                res = ASFFaceFeatureCompare(m_hEngine, &database_iter->second, &detectFaceFeature, &confidenceValue);
 
-                            //printf("Confidence_Value = %lf\n", confidenceValue);
-                            if (confidenceValue >= 0.8)
-                            {
-                                //predict = database_iter->first;
-                                is_recognize = true;
-                                break;
-                            }
-                            else
-                            {
-                                is_recognize = false;
-                                continue;
+                                // printf("Confidence_Value = %lf\n", confidenceValue);
+                                if (confidenceValue >= 0.8)
+                                {
+                                    // predict = database_iter->first;
+                                    is_recognize = true;
+                                    break;
+                                }
+                                else
+                                {
+                                    is_recognize = false;
+                                    continue;
+                                }
+
+                                // printf("Name = %s\n", predict.c_str());
+
+                                /*if (confidenceValue > maxScore)
+                                {
+                                    maxScore = confidenceValue;
+                                    predict = database_iter->first;
+                                    score = maxScore;
+                                }*/
+
+                                /*if (score >= 0.8)
+                                    break;*/
                             }
 
-                            // printf("Name = %s\n", predict.c_str());
-                            
-                            /*if (confidenceValue > maxScore)
+                            if (is_recognize == true)
                             {
-                                maxScore = confidenceValue;
                                 predict = database_iter->first;
-                                score = maxScore;
-                            }*/
+                            }
 
-                            /*if (score >= 0.8)
-                                break;*/
-                        } 
+                            if (is_recognize == false)
+                            {
+                                // predict= "UnKnown";
+                                predict = "";
+                            }
 
-                        if(is_recognize == true)
-                        {
-                           predict = database_iter->first;
+                            cv::putText(mainRgbImage, predict, cv::Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255, 255, 0), 2);
                         }
-
-                        if(is_recognize == false)
-                        {
-                            //predict= "UnKnown";
-                            predict = "";
-                        }
-
-                        cv::putText(mainRgbImage, predict, cv::Point(detectedFaces.faceRect[i].left, detectedFaces.faceRect[i].top), cv::FONT_HERSHEY_SIMPLEX, 0.75, cv::Scalar(0, 0, 0), 1);
                     }
-                    
                 }
             }
             opencv_queue->putMatQueue(mainRgbImage);
